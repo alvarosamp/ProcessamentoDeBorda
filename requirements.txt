@@ -1,0 +1,36 @@
+# Requirements for ProcessamentoDeBorda
+# Core libraries used by the scripts (ultralytics, OpenCV, numpy, torch)
+ultralytics>=8.3.233
+torch>=2.0.0
+opencv-python>=4.7.0
+numpy>=1.23.0
+
+# TFLite runtime (often used on Raspberry Pi / ARM). On Windows you may
+# prefer to install `tensorflow` instead of `tflite-runtime`.
+tflite-runtime
+
+# ONNX export & runtime (used/produced by Exportacao.py)
+onnx>=1.12.0,<1.20.0
+onnxruntime
+onnx-tf
+onnx2tf
+onnx_graphsurgeon
+onnxslim
+sng4onnx
+
+# Optional: TensorFlow and tf_keras for SavedModel/TFLite conversion
+# Note: TensorFlow can be heavy and platform-sensitive (Python version matters).
+tensorflow>=2.19.0,<2.21.0
+tf_keras<=2.19.0
+
+# Notes:
+# - `ai-edge-litert` / `ai_edge_litert` is referenced by some conversion tools
+#   but is not available on the public PyPI. If you require it, install via
+#   the vendor/NVIDIA index or follow vendor instructions.
+# - Installing `tflite-runtime` on Windows is uncommon; on Windows use
+#   `pip install tensorflow` (above) to obtain the TensorFlow converter.
+# - Some packages (onnx-tf, onnx2tf) may require specific Python versions
+#   (e.g., 3.10/3.11) and matching TensorFlow wheel availability.
+# - For reproducible student environment, consider creating a small
+#   instructions section in the README telling students to use a specific
+#   Python version and how to set up the venv.

@@ -1,9 +1,26 @@
 from ultralytics import YOLO
 import cv2
+import os
 
-# A constante 0 geralmente se refere à primeira câmera conectada (a da Raspberry Pi)
-CAMERA_SOURCE = 0 
-MODEL_NAME = 'yolov8n.pt' # 'n' é de 'nano', a versão mais leve e rápida, ideal para o Raspberry Pi
+# Detecta a fonte da câmera com prioridade:
+# 1) variável de ambiente `CAMERA` (p.ex. "rtsp://..." ou "/dev/video1" ou "0")
+# 2) se /dev/video1 existir (câmera externa USB no Linux)
+# 3) fallback para índice 0 (primeira câmera)
+env_cam = os.getenv('1')
+if env_cam:
+    # tenta interpretar números como inteiros
+    try:
+        CAMERA_SOURCE = int(env_cam)
+    except Exception:
+        CAMERA_SOURCE = env_cam
+else:
+    # preferência por /dev/video1 quando presente (externa)
+    if os.name == 'posix' and os.path.exists('/dev/video1'):
+        CAMERA_SOURCE = '/dev/video1'
+    else:
+        CAMERA_SOURCE = 0
+
+MODEL_NAME = r'C:\Users\vish8\OneDrive\Desktop\IC\ProcessamentoDeBorda\modelo.pt'
 
 print(f"[INFO] Carregando modelo {MODEL_NAME}...")
 

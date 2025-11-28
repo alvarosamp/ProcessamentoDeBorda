@@ -1,5 +1,8 @@
 ## ProcessamentoDeBorda — README
 
+
+Link para pasta no drive : https://drive.google.com/drive/folders/1g3x8MJF9OEcAV2W9HhRZ2l_vymIgVsv2?usp=sharing
+
 Este repositório mostra exemplos simples de inferência de visão computacional usando YOLOv8, com foco em Edge AI / processamento de borda. Contém scripts para: (1) exportar um modelo PyTorch para TFLite (incluindo quantizado), (2) rodar YOLOv8 diretamente com a biblioteca Ultralytics (PyTorch) e (3) rodar um modelo TFLite otimizado (Int8) — útil em dispositivos de baixa potência como Raspberry Pi.
 
 ## Arquivos principais
