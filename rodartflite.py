@@ -1,35 +1,176 @@
+import argparse
+import os
+import time
+
 import cv2
 import numpy as np
-import time
-# Importamos a versão otimizada do TFLite para o Raspberry Pi
-from tflite_runtime.interpreter import Interpreter 
 
-# --- Configurações ---
-CAMERA_SOURCE = 0
-TFLITE_MODEL_PATH = 'yolov8n_fullint.tflite' # Altere para o caminho do seu modelo .tflite
-INPUT_WIDTH, INPUT_HEIGHT = 640, 640 # Dimensões esperadas pelo YOLOv8 TFLite
+# Importamos a versão otimizada do TFLite (comum no Raspberry Pi)
+try:
+    from tflite_runtime.interpreter import Interpreter
+except Exception:  # pragma: no cover
+    Interpreter = None
 
-def rodar_tflite_quantizado(model_path, camera_source):
-    """Carrega um modelo TFLite e roda a inferência em tempo real."""
-    print(f"\n[INFO] Carregando modelo TFLite Quantizado: {model_path} (Int8)")
-    
+
+def _parse_source(value: str):
+    """Converte fonte para int quando aplicável (ex.: "0" -> 0)."""
+    if value is None:
+        return None
     try:
-        # 1. Carrega o Interpreter
+        return int(value)
+    except Exception:
+        return value
+
+
+def _build_synthetic_input(input_details, fill_mode: str = "zero"):
+    """Gera um tensor de entrada compatível com o modelo, sem precisar de câmera."""
+    info = input_details[0]
+    shape = tuple(info["shape"])
+    dtype = info["dtype"]
+
+    quant = info.get("quantization_parameters") or {}
+    zero_point = 0
+    if isinstance(quant, dict) and "zero_points" in quant and len(quant["zero_points"]) > 0:
+        zero_point = int(quant["zero_points"][0])
+    elif isinstance(info.get("quantization"), (tuple, list)) and len(info["quantization"]) == 2:
+        zero_point = int(info["quantization"][1])
+
+    if fill_mode == "zero":
+        return np.full(shape, zero_point, dtype=dtype)
+    if fill_mode == "random":
+        if np.issubdtype(dtype, np.integer):
+            if dtype == np.int8:
+                low, high = -128, 127
+            elif dtype == np.uint8:
+                low, high = 0, 255
+            else:
+                low, high = np.iinfo(dtype).min, np.iinfo(dtype).max
+            return np.random.randint(low, high + 1, size=shape, dtype=dtype)
+        return np.random.random(size=shape).astype(dtype)
+    raise ValueError(f"fill_mode inválido: {fill_mode}")
+
+
+def _preprocess_frame(frame_bgr, input_details, keep_bgr: bool = True):
+    info = input_details[0]
+    shape = info["shape"]
+    dtype = info["dtype"]
+
+    if len(shape) != 4:
+        raise ValueError(f"Shape de entrada inesperado: {shape}")
+
+    batch, h, w, c = shape
+    if batch != 1 or c != 3:
+        # mantém simples: casos mais comuns (1,H,W,3)
+        raise ValueError(f"Entrada esperada (1,H,W,3); recebido: {shape}")
+
+    img = cv2.resize(frame_bgr, (int(w), int(h)))
+    if not keep_bgr:
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+    if dtype == np.uint8:
+        tensor = img.astype(np.uint8)
+    elif dtype == np.int8:
+        # Mapeia 0..255 -> -128..127 (aproximação comum para modelos int8)
+        tensor = (img.astype(np.int16) - 128).astype(np.int8)
+    else:
+        # fallback: normaliza para float32 0..1
+        tensor = (img.astype(np.float32) / 255.0).astype(dtype)
+
+    return np.expand_dims(tensor, axis=0)
+
+
+def rodar_tflite_quantizado(
+    model_path,
+    source,
+    image_path=None,
+    bench_iters: int = 0,
+    no_display: bool = False,
+    keep_bgr: bool = True,
+):
+    """Carrega um modelo TFLite e roda inferência por câmera, arquivo ou benchmark."""
+    print(f"\n[INFO] Carregando modelo TFLite: {model_path}")
+
+    if Interpreter is None:
+        print("Erro: não foi possível importar 'tflite_runtime'.")
+        print("No Windows, muitas vezes é mais simples usar TensorFlow (tensorflow.lite.Interpreter).")
+        return 2
+
+    if not os.path.exists(model_path):
+        print(f"Erro: modelo não encontrado em: {model_path}")
+        return 2
+
+    try:
         interpreter = Interpreter(model_path=model_path)
         interpreter.allocate_tensors()
     except Exception as e:
         print(f"Erro ao carregar o Interpreter TFLite: {e}")
-        print("Certifique-se de instalar 'tflite-runtime'.")
-        return
+        return 2
 
     input_details = interpreter.get_input_details()
     output_details = interpreter.get_output_details()
-    
-    # 2. Inicializa a Câmera Manualmente
-    cap = cv2.VideoCapture(camera_source)
+
+    # ----------------- Benchmark sem câmera -----------------
+    if bench_iters and bench_iters > 0:
+        input_tensor = _build_synthetic_input(input_details, fill_mode="zero")
+        interpreter.set_tensor(input_details[0]["index"], input_tensor)
+
+        # warmup
+        for _ in range(min(5, bench_iters)):
+            interpreter.invoke()
+
+        times = []
+        for _ in range(bench_iters):
+            t0 = time.perf_counter()
+            interpreter.invoke()
+            t1 = time.perf_counter()
+            times.append((t1 - t0) * 1000.0)
+
+        arr = np.array(times, dtype=np.float32)
+        print("\n===== BENCHMARK (sem câmera) =====")
+        print(f"Iterações: {bench_iters}")
+        print(f"Latência média: {arr.mean():.2f} ms")
+        print(f"Latência p50:  {np.percentile(arr, 50):.2f} ms")
+        print(f"Latência p90:  {np.percentile(arr, 90):.2f} ms")
+        print(f"Latência min/max: {arr.min():.2f}/{arr.max():.2f} ms")
+        print(f"Throughput aprox.: {1000.0 / arr.mean():.2f} FPS")
+        print("==================================\n")
+        return 0
+
+    # ----------------- Modo imagem única (sem câmera) -----------------
+    if image_path:
+        if not os.path.exists(image_path):
+            print(f"Erro: imagem não encontrada em: {image_path}")
+            return 2
+
+        frame = cv2.imread(image_path)
+        if frame is None:
+            print("Erro: falha ao ler a imagem (formato inválido?)")
+            return 2
+
+        input_tensor = _preprocess_frame(frame, input_details, keep_bgr=keep_bgr)
+        t0 = time.perf_counter()
+        interpreter.set_tensor(input_details[0]["index"], input_tensor)
+        interpreter.invoke()
+        t1 = time.perf_counter()
+
+        outputs = [interpreter.get_tensor(d["index"]) for d in output_details]
+        print(f"Inferência OK. Tempo: {(t1 - t0) * 1000.0:.2f} ms")
+        for i, out in enumerate(outputs):
+            print(f"Output[{i}] shape={getattr(out, 'shape', None)} dtype={getattr(out, 'dtype', None)}")
+
+        if not no_display:
+            cv2.putText(frame, "TFLite (imagem unica)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+            cv2.imshow("Inferencia TFLite (sem camera)", frame)
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
+        return 0
+
+    # ----------------- Modo câmera / vídeo -----------------
+    cap = cv2.VideoCapture(source)
     if not cap.isOpened():
-        print("Erro: Câmera não detectada.")
-        return
+        print("Erro: fonte de vídeo/câmera não abriu.")
+        print("Dicas: use --image <arquivo.jpg> ou --bench <iters> para rodar sem câmera.")
+        return 2
 
     print("Iniciando inferência TFLite. Pressione 'q' para sair.")
 
@@ -84,10 +225,8 @@ def rodar_tflite_quantizado(model_path, camera_source):
 
         h0, w0 = frame.shape[:2]
 
-        # Pré-processamento: Redimensionamento e UINT8 (Int8 espera isso)
-        input_tensor = cv2.resize(frame, (INPUT_WIDTH, INPUT_HEIGHT))
-        input_tensor = input_tensor.astype(np.uint8)
-        input_tensor = np.expand_dims(input_tensor, axis=0)  # Adiciona dimensão de batch
+        # Pré-processamento compatível com o dtype/shape do modelo
+        input_tensor = _preprocess_frame(frame, input_details, keep_bgr=keep_bgr)
 
         # Medição de Tempo e Execução da Inferência
         t_start = time.time()
@@ -181,15 +320,39 @@ def rodar_tflite_quantizado(model_path, camera_source):
         cv2.putText(display_frame, f"FPS: {FPS:.2f}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 3)
         cv2.putText(display_frame, f"CPU/Energia: BAIXA (Int8)", (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
-        cv2.imshow('Inferência TFLite Quantizado', display_frame)
+        if not no_display:
+            cv2.imshow('Inferência TFLite Quantizado', display_frame)
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
     # 4. Liberação de Recursos
     cap.release()
-    cv2.destroyAllWindows()
+    if not no_display:
+        cv2.destroyAllWindows()
     print("Inferência TFLite encerrada.")
+    return 0
 
 if __name__ == '__main__':
-    rodar_tflite_quantizado(TFLITE_MODEL_PATH, CAMERA_SOURCE)
+    parser = argparse.ArgumentParser(description="Roda um modelo TFLite (inclui modo sem câmera).")
+    parser.add_argument("--model", default="yolov8n_fullint.tflite", help="Caminho do .tflite")
+    parser.add_argument("--source", default="0", help="Índice da câmera (ex: 0) ou caminho de vídeo")
+    parser.add_argument("--image", default=None, help="Rodar em uma imagem única (sem câmera)")
+    parser.add_argument("--bench", type=int, default=0, help="Benchmark sem câmera: N iterações")
+    parser.add_argument("--no-display", action="store_true", help="Não abrir janelas (headless)")
+    parser.add_argument("--rgb", action="store_true", help="Converter BGR->RGB no pré-processamento")
+
+    args = parser.parse_args()
+
+    source = _parse_source(args.source)
+    keep_bgr = not args.rgb
+    raise SystemExit(
+        rodar_tflite_quantizado(
+            model_path=args.model,
+            source=source,
+            image_path=args.image,
+            bench_iters=args.bench,
+            no_display=args.no_display,
+            keep_bgr=keep_bgr,
+        )
+    )

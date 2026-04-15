@@ -97,6 +97,27 @@ python3 Modelorasp.py
 python3 rodartflite.py
 ```
 
+### Rodar sem câmera (imagem ou benchmark)
+
+Se você está sem webcam/câmera conectada, ainda dá para testar o modelo quantizado (carregamento + inferência + latência) de duas formas:
+
+- **Imagem única** (sem loop de câmera):
+
+```bash
+python3 rodartflite.py --model yolov8n_fullint.tflite --image caminho/para/imagem.jpg
+```
+
+- **Benchmark** (sem câmera e sem imagem, usando tensor sintético):
+
+```bash
+python3 rodartflite.py --model yolov8n_fullint.tflite --bench 200 --no-display
+```
+
+Observações:
+
+- Se o seu modelo esperar **RGB** (comum em exportações), você pode testar com `--rgb`.
+- No Windows, `tflite-runtime` nem sempre está disponível; nesse caso, você pode precisar rodar em um ambiente onde ele funcione (ex.: Raspberry Pi) ou adaptar para usar o `tensorflow.lite.Interpreter`.
+
 Parâmetros a ajustar:
 
  - `CAMERA_SOURCE` (em `Modelorasp.py` e `rodartflite.py`) — índice da câmera ou caminho para arquivo/RTSP.

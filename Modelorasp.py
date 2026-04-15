@@ -6,7 +6,7 @@ import os
 # 1) variável de ambiente `CAMERA` (p.ex. "rtsp://..." ou "/dev/video1" ou "0")
 # 2) se /dev/video1 existir (câmera externa USB no Linux)
 # 3) fallback para índice 0 (primeira câmera)
-env_cam = os.getenv('1')
+env_cam = os.getenv('CAMERA')
 if env_cam:
     # tenta interpretar números como inteiros
     try:
