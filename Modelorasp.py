@@ -20,7 +20,7 @@ else:
     else:
         CAMERA_SOURCE = 0
 
-MODEL_NAME = r'C:\Users\vish8\OneDrive\Desktop\IC\ProcessamentoDeBorda\modelo.pt'
+MODEL_NAME = r'C:\Users\vish8\OneDrive\Documentos\ProcessamentoDeBorda\best.pt'
 
 print(f"[INFO] Carregando modelo {MODEL_NAME}...")
 
