@@ -86,6 +86,7 @@ def rodar_tflite_quantizado(
     bench_iters: int = 0,
     no_display: bool = False,
     keep_bgr: bool = True,
+    esp32_port: str = None,
 ):
     """Carrega um modelo TFLite e roda inferência por câmera, arquivo ou benchmark."""
     print(f"\n[INFO] Carregando modelo TFLite: {model_path}")
@@ -171,6 +172,15 @@ def rodar_tflite_quantizado(
         print("Erro: fonte de vídeo/câmera não abriu.")
         print("Dicas: use --image <arquivo.jpg> ou --bench <iters> para rodar sem câmera.")
         return 2
+
+    esp = None
+    if esp32_port:
+        from enviar_esp32 import ConexaoESP32
+        try:
+            esp = ConexaoESP32(porta=esp32_port)
+            print(f"[INFO] Conectado à ESP32 em {esp32_port}")
+        except Exception as e:
+            print(f"[AVISO] Não foi possível conectar à ESP32 em {esp32_port}: {e}")
 
     print("Iniciando inferência TFLite. Pressione 'q' para sair.")
 
@@ -315,6 +325,12 @@ def rodar_tflite_quantizado(
             label = f"{cls_id}:{score:.2f}"
             cv2.putText(display_frame, label, (x1, max(y1 - 10, 0)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
+            if esp is not None:
+                try:
+                    esp.enviar_deteccao(cls_id, score)
+                except Exception as e:
+                    print(f"[AVISO] Falha ao enviar para a ESP32: {e}")
+
         # Demonstração das Métricas na tela
         cv2.putText(display_frame, f"TFLite Quantizado (8-bit)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
         cv2.putText(display_frame, f"FPS: {FPS:.2f}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 3)
@@ -330,6 +346,8 @@ def rodar_tflite_quantizado(
     cap.release()
     if not no_display:
         cv2.destroyAllWindows()
+    if esp is not None:
+        esp.fechar()
     print("Inferência TFLite encerrada.")
     return 0
 
@@ -341,6 +359,7 @@ if __name__ == '__main__':
     parser.add_argument("--bench", type=int, default=0, help="Benchmark sem câmera: N iterações")
     parser.add_argument("--no-display", action="store_true", help="Não abrir janelas (headless)")
     parser.add_argument("--rgb", action="store_true", help="Converter BGR->RGB no pré-processamento")
+    parser.add_argument("--esp32-port", default=None, help="Porta serial da ESP32 (ex: COM3). Se informado, envia cada detecção via serial.")
 
     args = parser.parse_args()
 
@@ -354,5 +373,6 @@ if __name__ == '__main__':
             bench_iters=args.bench,
             no_display=args.no_display,
             keep_bgr=keep_bgr,
+            esp32_port=args.esp32_port,
         )
     )
